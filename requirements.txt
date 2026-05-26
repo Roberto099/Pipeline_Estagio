@@ -1,0 +1,8 @@
+pandas
+requests
+crate
+clts-pcp
+pymysql
+pymongo
+openpyxl
+ipython

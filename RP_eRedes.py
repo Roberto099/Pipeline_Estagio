@@ -17,6 +17,12 @@ import pymysql
 import pymongo
 from urllib.parse import quote
 import tempfile
+import unicodedata
+import re
+import hashlib
+import unicodedata
+import numpy as np
+from pymongo.errors import BulkWriteError
 
 def run_pipeline():
 
@@ -62,7 +68,7 @@ def run_pipeline():
         #Check Colab
         try:
             import google.colab
-            ENV = "colab"
+            ENV = "Colab"
         except ImportError:
 
             #Check Jupyter
@@ -75,16 +81,15 @@ def run_pipeline():
             except Exception:
                 ENV = "Flask"
         
-    #Check Render/Flask
+    #Check Render
     if os.getenv("RENDER"):
         ENV = "Render"
-        from airflow.models import Variable
         
     print("Detected ENV:", ENV)
 
 
     #Specifications based on the ENV
-    if ENV == "colab":
+    if ENV == "Colab":
         print("Running in Colab")
         #COLAB imports
         from google.colab import userdata
@@ -94,9 +99,6 @@ def run_pipeline():
         print("folder_path:", folder_path)
         notebookname = requests.get("http://172.28.0.12:9000/api/sessions").json()[0]["name"]
         print("Notebook:", notebookname)
-        #Identify user
-        user=notebookname.split("-")[0]
-        print ("user:", user)
 
         #Set variables
         parts=[hostname, user, "eRedes data" , ipynbname.name()]
@@ -110,7 +112,6 @@ def run_pipeline():
         print("Running in Render")
         script_path = os.path.abspath(__file__)
         parts = __file__.replace('\\', "/").split('/')
-        datapath=f'./data/ppimenta/{parts[-1]}'
     
     elif ENV == "Flask":
         print("Running local with flask")
@@ -121,10 +122,19 @@ def run_pipeline():
     #Info
     script = parts[-1]
     channel = parts[-2]
-    user = script.split("_")[0]
+
+    if ENV == "Colab":
+        #Set user
+        user=notebookname.split("_")[0]
+        print ("user:", user)
+    else:    
+        #Set user
+        user = script.split("_")[0]
+    
+    print("USER:", user)
 
     ##
-    if ENV == "colab.google":
+    if ENV == "Colab":
         clts.elapt[f"running <a href='https://colab.research.google.com/drive/{script.replace('fileId=', '')}'>google colab notebook</a>"] = clts.deltat(tstart)
     else:
         try:
@@ -143,8 +153,6 @@ def run_pipeline():
 
     context = f'{hostname} ({ip}) | {user} | {channel} | {script} | {destination}'
     clts.setcontext(context)
-    now = str(datetime.datetime.now())[0:19]
-    hoje = now[:10]
 
     if verbose:
         print("context:", context)
@@ -153,17 +161,23 @@ def run_pipeline():
     #Secrets Definition
     #-----------------------
 
-    if ENV == "colab":
+    if ENV == "Colab":
         def get_secret(secret):
             return userdata.get(secret)
     
-    else:
+    elif ENV == "Render":
+        def get_secret(secret):
+            path = f"/etc/secrets/{secret}"
+
+            with open(path, "r") as f:
+                return f.read()
+    
+    elif ENV == "Flask":
         def get_secret(secret):
             path = f"secrets/{secret}"
 
             with open(path, "r") as f:
                 return f.read()
-
 
     #-----------------------
     #Connection With Github
@@ -185,12 +199,7 @@ def run_pipeline():
 
     os.makedirs("data", exist_ok=True)
 
-    skip = 0
-
     for fls in files:
-        skip += 1
-        if skip == 3:
-            break
         filename = fls['name']
         print(filename)
         #Make url format
@@ -209,63 +218,194 @@ def run_pipeline():
     #Data Concatenation
     #-----------------------
     
-    dfs = []
+    import warnings
+
+    warnings.filterwarnings(
+        "ignore",
+        message="Workbook contains no default style"
+    )
+
+    #-----------------------
+    #Data Concatenation
+    #-----------------------
+
+    # Stores grouped tables
+    tables = {}
 
     #Make List
     for file in os.listdir("data"):
         if file.endswith(".xlsx"):
-            #Skip header junk
-            df = pd.read_excel(f"data/{file}", skiprows=9)
-            #Clean column names
-            df.columns =(
-            df.columns
-            .str.strip()
-            .str.replace(" ", "_")
-            )
-            #append
-            dfs.append(df)
-    
-    #Concat
-    final_df = pd.concat(dfs, ignore_index=True)
+            #FilePath
+            filepath = os.path.join("data", file)
+            #Read first 15 rows
+            pre = pd.read_excel(filepath, header=None, nrows=15)
+            header_row = 0
 
-    #Make "Data" and "Hora" be the same Column
-    final_df["Data"] = pd.to_datetime(
-        final_df["Data"] + " " + final_df["Hora"],
-        errors="coerce"
-    )
+            for i, row in pre.iterrows():
+                row_text = " ".join(
+                    str(x).strip().lower()
+                    for x in row
+                    if pd.notna(x)
+                )
 
-    #Drop "Hora"
-    final_df = final_df.drop(columns=["Hora"])
+                if "data" in row_text and "hora" in row_text:
+                    header_row = i
+                    break
 
-    #Simplify Columns Names
-    final_df = final_df.rename(columns={
-        "Data": "timestamp",
-        "Potência_Ativa_Saldo_(kW)_-_Consumo": "potencia_ativa",
-        "Potência_Reativa_Indutiva_(kVAr)_-_Consumo": "potencia_reativa_indutiva",
-        "Potência_Reativa_Capacitiva_(kVAr)_-_Consumo": "potencia_reativa_capacitiva"
-    })
+            df = pd.read_excel(filepath, skiprows=header_row)
 
-    clts.elapt[f"Concatenation completed"] = clts.deltat(tstart)
-    
-    #See results
-    print(final_df.columns)
-    print(final_df.shape)
-    print(final_df.dtypes)
-    final_df.head()
+            # Clean column names
+            df.columns = [
+                re.sub(r"_+", "_",
+                    re.sub(r"[^a-zA-Z0-9_]", "_",
+                        unicodedata.normalize("NFKD", str(col))
+                        .encode("ascii", "ignore")
+                        .decode("utf-8")
+                        .strip()
+                        .lower()
+                    )
+                ).strip("_")
+                for col in df.columns
+            ]
+
+            #Join data and hora
+            if "data" in df.columns and "hora" in df.columns:
+
+                df["data"] = pd.to_datetime(
+                    df["data"].astype(str) + " " + df["hora"].astype(str),
+                    errors="coerce"
+                )
+
+                df = df.drop(columns=["hora"])
+
+                df = df.rename(columns={"data": "timestamp"})
+
+            # tuple makes it hashable
+            schema = tuple(df.columns)
+
+            # Create deterministic schema hash
+            schema_hash = hashlib.md5(
+                str(schema).encode()
+            ).hexdigest()[:8]
+
+            table_name = f"energia_{schema_hash}"
+
+            #Check if its new in this run
+            if table_name not in tables:
+
+                print(f"NEW TABLE STRUCTURE FOUND: {table_name}")
+
+                print(schema)
+
+                tables[table_name] = []
+
+            # Append dataframe
+            tables[table_name].append(df)
+
+
+    ##
+    INVALID_VALUES = {"-", "", "?", "N/A", "NA", "null", "None"}
+
+    #Loop trough schemas and clean them
+    for table_name in tables:
+
+        cleaned_dfs = []
+
+        for df in tables[table_name]:
+
+            # Clean invalid values
+            df = df.replace(list(INVALID_VALUES), pd.NA)
+
+            cleaned_dfs.append(df)
+
+        tables[table_name] = cleaned_dfs
+
+
+    #Final concatenation
+    final_tables = {}
+
+    for table_name, dfs in tables.items():
+        final_tables[table_name] = pd.concat(dfs, ignore_index=True)
+
+
+    #Just checking
+    for name, df in final_tables.items():
+
+        nan_count = df.isna().sum().sum()
+
+        print(f"{name} → total NaNs: {nan_count}")
 
 
     #-----------------------
     #Connection with databases and insertion of data
     #-----------------------
 
+    #Define Types
+    def map_dtype(dtype):
+        if pd.api.types.is_datetime64_any_dtype(dtype):
+            return "DATETIME"
+
+        elif pd.api.types.is_float_dtype(dtype):
+            return "DOUBLE"
+
+        elif pd.api.types.is_integer_dtype(dtype):
+            return "BIGINT"
+
+        else:
+            return "TEXT"
+
+    #Define Tables for TiDB
+    def create_table_tidb(table_name, df):
+
+        cols_sql = []
+
+        for col in df.columns:
+            col_type = map_dtype(df[col].dtype)
+            cols_sql.append(f"`{col}` {col_type}")
+
+        cols_sql = ", ".join(cols_sql)
+
+        sql = f"""
+        CREATE TABLE IF NOT EXISTS `{table_name}` (
+            {cols_sql}
+        )
+        """
+
+        return sql
+
+    #Define Tables for crate
+    def create_table_crate(table_name, df):
+
+        cols_sql = []
+
+        for col in df.columns:
+
+            col_type = map_dtype(df[col].dtype)
+
+            # Crate prefers TIMESTAMP instead of DATETIME
+            if col_type == "DATETIME":
+                col_type = "TIMESTAMP"
+
+            cols_sql.append(f'"{col}" {col_type}')
+
+        cols_sql = ", ".join(cols_sql)
+
+        sql = f"""
+        CREATE TABLE IF NOT EXISTS "{table_name}" (
+            {cols_sql}
+        )
+        """
+
+        return sql
+
+
+    #Start Connection
     clts.elapt[f"Starting database accesses:"] = clts.deltat(tstart)
 
     #List of databases
     dblist=json.loads(get_secret(f"{user}-dblist.json"))
     print(dblist)
 
-    rows_per_db = {}
-    size_per_db = {}
 
     #Iterate per database
     for db in dblist:
@@ -283,12 +423,12 @@ def run_pipeline():
                 print("... connecting to sql_tls database...")
                 timeout = dbcreds['timeout']
 
-                if ENV == "colab":
+                if ENV == "Colab":
                     pem_content = userdata.get(dbcreds['pem'])
                     with open(f'/tmp/{user}.pem', 'w') as f:
                         f.write(pem_content)
                     pem_path = f"/tmp/{user}.pem"
-                
+
                 else:
                     pem_path = f"secrets/{user}-{db}.pem"
 
@@ -323,7 +463,7 @@ def run_pipeline():
                 cursor = connection.cursor()
                 clts.elapt[f"... connected to `{db}`"] = clts.deltat(tstart)
                 status = "ok"
-            
+
             #MongoDB
             elif dbcreds['dbms'] == "mongodb":
                 print("... connecting to mongodb database...")
@@ -335,131 +475,115 @@ def run_pipeline():
 
                 clts.elapt[f"... connected to `{db}`"] = clts.deltat(tstart)
                 status = "ok"
-        
+
         #Error
         except Exception as e:
             print("Error:", e)
             clts.elapt[f"... error `{e}` ❌"] = clts.deltat(tstart)
             status='onerror'
 
-
         ###INSERTION OF DATA###
 
         if status == "ok":
-            #Count inserts
-            inserts = 0
+            total_inserts = 0
+            for table_name, df in final_tables.items():
 
-            #TiDB insertion
-            if dbcreds['dbms'] == "sql_tls":
-                sql = """
-                INSERT INTO energia (
-                timestamp,
-                potencia_ativa,
-                potencia_reativa_indutiva,
-                potencia_reativa_capacitiva
-                ) VALUES (%s, %s, %s, %s)
-                ON DUPLICATE KEY UPDATE
-                potencia_ativa = VALUES(potencia_ativa),
-                potencia_reativa_indutiva = VALUES(potencia_reativa_indutiva),
-                potencia_reativa_capacitiva = VALUES(potencia_reativa_capacitiva)
-                """
+                #CREATE TABLE
+                if dbcreds["dbms"] == "sql_tls":
 
-                values = [
-                (
-                    row["timestamp"],
-                    row["potencia_ativa"],
-                    row["potencia_reativa_indutiva"],
-                    row["potencia_reativa_capacitiva"]
-                )
-                for _, row in final_df.iterrows()
-                ]
+                    create_sql = create_table_tidb(table_name, df)
 
-                cursor.executemany(sql, values)
-                connection.commit()
-                inserts += len(values)
+                    cursor.execute(create_sql)
+                    connection.commit()
 
-                cursor.execute("""
-                    SELECT data_length + index_length
-                    FROM information_schema.TABLES
-                    WHERE table_schema = %s
-                    AND table_name = 'energia'
-                """, (dbcreds["database"],))
+                elif dbcreds["dbms"] == "crate":
 
-                row = cursor.fetchone()
-                size_per_db[db] = list(row.values())[0] if row else 0
+                    create_sql = create_table_crate(table_name, df)
 
-            #Crate insertion
-            elif dbcreds['dbms'] == "crate":
-                sql = """
-                INSERT INTO energia (
-                timestamp,
-                potencia_ativa,
-                potencia_reativa_indutiva,
-                potencia_reativa_capacitiva
-                )
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT (timestamp) DO UPDATE SET
-                potencia_ativa = excluded.potencia_ativa,
-                potencia_reativa_indutiva = excluded.potencia_reativa_indutiva,
-                potencia_reativa_capacitiva = excluded.potencia_reativa_capacitiva
-                """
+                    cursor.execute(create_sql)
+                    connection.commit()
 
-                values = [
-                (
-                    row["timestamp"],
-                    row["potencia_ativa"],
-                    row["potencia_reativa_indutiva"],
-                    row["potencia_reativa_capacitiva"]
-                )
-                for _, row in final_df.iterrows()
-                ]
+                #Check if its empty
+                if df.empty:
+                    continue
 
-                cursor.executemany(sql, values)
-                connection.commit()
-                inserts += len(values)
+                inserts = len(df)
+                total_inserts += inserts
 
-                cursor.execute("""
-                    SELECT sum(size)
-                    FROM sys.shards
-                    WHERE table_name = 'energia'
-                """)
+                # detect columns dynamically
+                columns = df.columns.tolist()
 
-                row = cursor.fetchone()
-                size_per_db[db] = row[0] if row else 0
+                #Prepare values for insertion
+                col_names = ", ".join(columns)
 
-            #MongoDB insertion
-            elif dbcreds['dbms'] == "mongodb":
+                clean_df = df.copy()
 
-                database = connection[dbcreds["database"]]
-                collection = database["energia"]
+                # remove inf
+                clean_df = clean_df.replace([np.inf, -np.inf], np.nan)
 
-                from pymongo import UpdateOne
+                # force full object conversion + strict None conversion
+                clean_df = clean_df.astype(object).where(pd.notna(clean_df), None)
 
-                ops = [
-                    UpdateOne(
-                        {"timestamp": row["timestamp"]},
-                        {"$set": {
-                            "potencia_ativa": row["potencia_ativa"],
-                            "potencia_reativa_indutiva": row["potencia_reativa_indutiva"],
-                            "potencia_reativa_capacitiva": row["potencia_reativa_capacitiva"]
-                        }},
-                        upsert=True
-                    )
-                    for _, row in final_df.iterrows()
-                ]
+                values = list(clean_df.itertuples(index=False, name=None))
 
-                if ops:
-                    collection.bulk_write(ops)
+                #Make sure key is right
+                key_column = "timestamp" if "timestamp" in columns else columns[0]
 
-                inserts = len(ops)
+                #INSERT into TiDB
+                if dbcreds["dbms"] == "sql_tls":
 
-                stats = database.command("collStats", "energia")
-                size_per_db[db] = stats["size"]
-            
-            #Results of insertions
-            clts.elapt[f"... {inserts} rows inserted, for {db}"] = clts.deltat(tstart)
-            print(f"... {inserts} rows inserted, for {db}")
-            rows_per_db[db] = inserts
+                    placeholders = ", ".join(["%s"] * len(columns))
+
+                    sql = f"""
+                    INSERT INTO {table_name} ({col_names})
+                    VALUES ({placeholders})
+                    ON DUPLICATE KEY UPDATE
+                    {", ".join([f"{c}=VALUES({c})" for c in columns if c != key_column])}
+                    """
+
+                    cursor.executemany(sql, values)
+                    connection.commit()
+
+                #INSERT into crateDB
+                elif dbcreds["dbms"] == "crate":
+
+                    placeholders = ", ".join(["?"] * len(columns))
+
+                    sql = f"""
+                    INSERT INTO {table_name} ({col_names})
+                    VALUES ({placeholders})
+                    ON CONFLICT ({"_id"}) DO NOTHING
+                    """
+
+                    cursor.executemany(sql, values)
+                    connection.commit()
+
+                #INSERT into MongoDB
+                elif dbcreds["dbms"] == "mongodb":
+
+                    database = connection[dbcreds["database"]]
+                    collection = database[table_name]
+
+                    # Skip empty dataframe
+                    if df.empty:
+                        continue
+
+                    # Replace NaN with None
+                    clean_df = df.where(pd.notnull(df), None)
+
+                    # Convert dataframe to list of dictionaries
+                    records = clean_df.to_dict("records")
+
+                    # Insert all rows directly
+                    try:
+                        collection.insert_many(records, ordered=False)
+
+                    except BulkWriteError:
+                        # Ignore duplicate key errors
+                        pass
+                #Results of insertions for consumo
+                clts.elapt[f"... {inserts} rows from {table_name} inserted, for {db}"] = clts.deltat(tstart)
+                print(f"... {inserts} rows from {table_name} inserted, for {db}")
 
     #-----------------------
     #Email
@@ -467,73 +591,68 @@ def run_pipeline():
 
     clts.elapt["Overall (before email):"] = clts.deltat(tstart)
 
-    if send_mail and email_addresses != []:
+    if send_mail and email_addresses:
 
-        # resumo
-        total_rows = inserts
+        import datetime
+
+        total_rows = total_inserts
         dbs = ", ".join(dblist)
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         toem = f"""
-        Energia - sincronização concluída
+    Energia - sincronização concluída
 
-        Data: {now}
-        Bases de dados: {dbs}
-        Registos enviados: {total_rows}
+    Data: {now}
+    Bases de dados: {dbs}
+    Registos processados: {total_rows}
 
-        {clts.listtimes()}
-        """
-    
-    credsgmail = json.loads(get_secret(f"configGMail_{user}.json"))
+    {clts.listtimes()}
+    """
 
+        try:
+            credsgmail = json.loads(get_secret(f"configGMail_{user}.json"))
 
-    try:
-      assunto = f"⚡ Energia sync — {total_rows} rows"
+            assunto = f"⚡ Energia sync — {total_rows} rows"
 
-      message = MIMEMultipart("alternative")
-      message["Subject"] = assunto
-      message["From"] = credsgmail['UserFrom']
-      message["To"] = ", ".join(email_addresses)
-      message["Reply-To"]="granderoberto7e@gmail.com"
+            message = MIMEMultipart("alternative")
+            message["Subject"] = assunto
+            message["From"] = credsgmail["UserFrom"]
+            message["To"] = ", ".join(email_addresses)
+            message["Reply-To"] = credsgmail["UserFrom"]
 
-      text = toem
+            html = f"""
+            <html>
+            <body style="font-family:Arial;">
+            <h3>⚡ Energia — sincronização</h3>
 
-      html = f"""
-      <html>
-      <body style="font-family:Montserrat;">
-      <h3>⚡ Energia — sincronização</h3>
+            <table border="1" cellpadding="6" cellspacing="0">
+                <tr><td><b>Data</b></td><td>{now}</td></tr>
+                <tr><td><b>Databases</b></td><td>{dbs}</td></tr>
+                <tr><td><b>Rows</b></td><td>{total_rows}</td></tr>
+            </table>
 
-      <table border="1" cellpadding="6" cellspacing="0">
-      <tr><td><b>Data</b></td><td>{now}</td></tr>
-      <tr><td><b>Databases</b></td><td>{dbs}</td></tr>
-      <tr><td><b>Rows</b></td><td>{total_rows}</td></tr>
-      </table>
+            <br>
+            <pre>{clts.listtimes()}</pre>
 
-      <br>
-      <pre>{clts.listtimes()}</pre>
+            <hr>
+            Automated pipeline
+            </body>
+            </html>
+            """
 
-      <hr>
-      Automated energy ingestion pipeline
-      </body>
-      </html>
-      """
+            message.attach(MIMEText(toem, "plain"))
+            message.attach(MIMEText(html, "html"))
 
-      message.attach(MIMEText(text, "plain"))
-      message.attach(MIMEText(html, "html"))
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context()) as server:
+                server.login(credsgmail["UserName"], credsgmail["UserPwd"])
+                server.sendmail(
+                    credsgmail["UserFrom"],
+                    email_addresses,
+                    message.as_string()
+                )
 
-      port = 465
-      ssl_context = ssl.create_default_context()
+            print("Notification sent")
 
-      with smtplib.SMTP_SSL("smtp.gmail.com", port, context=ssl_context) as server:
-          server.login(credsgmail['UserName'], credsgmail['UserPwd'])
-          server.sendmail(
-              credsgmail['UserFrom'],
-              email_addresses,
-              message.as_string()
-          )
-
-      print("Nottification sended")
-
-    except Exception as e:
-        print("Erro email:", e)
+        except Exception as e:
+            print("Erro email:", e)
     
