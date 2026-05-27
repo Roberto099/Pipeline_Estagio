@@ -211,6 +211,7 @@ def run_pipeline():
         #Transfer the files to colab
         with open(f"data/{filename}", "wb") as f:
             f.write(res.content)
+        break
 
     clts.elapt[f"Data loaded to local enviromnet"] = clts.deltat(tstart)
 
