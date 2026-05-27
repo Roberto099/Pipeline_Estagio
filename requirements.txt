@@ -1,8 +1,9 @@
+flask
+gunicorn
 pandas
+numpy
 requests
-crate
-clts-pcp
 pymysql
 pymongo
+crate
 openpyxl
-ipython
