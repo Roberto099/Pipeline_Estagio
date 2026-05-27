@@ -1,5 +1,6 @@
 from flask import Flask
 from RP_eRedes import run_pipeline
+import os
 
 app = Flask(__name__)
 
