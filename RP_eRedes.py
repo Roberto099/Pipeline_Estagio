@@ -214,13 +214,13 @@ def run_pipeline():
     
     #List of databases
     dblist=json.loads(get_secret(f"{user}-dblist.json"))
-    dbcreds=json.loads(get_secret(f"{user}-{db}.json"))
     print(dblist)
     
     #Iterate per database
     for db in dblist:
         #Connection
         status="nok"
+        dbcreds=json.loads(get_secret(f"{user}-{db}.json"))
         clts.elapt[f"Connecting to `{db}`"] = clts.deltat(tstart)
         if verbose:
             print ("db in dblist:", db)
