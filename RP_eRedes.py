@@ -436,8 +436,11 @@ def run_pipeline():
                         f.write(pem_content)
                     pem_path = f"/tmp/{user}.pem"
 
-                else:
+                elif ENV == "Render":
                     pem_path = f"/etc/secrets/{user}-{db}.pem"
+    
+                else:
+                    pem_path = f"secrets/{user}-{db}.pem"
 
     
                 connection = pymysql.connect(
