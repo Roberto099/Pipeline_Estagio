@@ -428,14 +428,11 @@ def run_pipeline():
                 print("... connecting to sql_tls database...")
                 timeout = dbcreds['timeout']
     
-                if ENV == "Colab":
-                    pem_content = userdata.get(dbcreds['pem'])
-                    with open(f'/tmp/{user}.pem', 'w') as f:
-                        f.write(pem_content)
-                    pem_path = f"/tmp/{user}.pem"
-    
-                else:
-                    pem_path = f"secrets/{user}-{db}.pem"
+                pem_content = userdata.get(dbcreds['pem'])
+                with open(f'/tmp/{user}.pem', 'w') as f:
+                    f.write(pem_content)
+                pem_path = f"/tmp/{user}.pem"
+
     
                 connection = pymysql.connect(
                     host=dbcreds["dest_host"],
@@ -567,6 +564,7 @@ def run_pipeline():
     
             # MongoDB
             elif dbcreds["dbms"] == "mongodb":
+                from pymongo.errors import BulkWriteError
     
                 database = connection[dbcreds["database"]]
                 collection = database[table_name]
@@ -577,10 +575,14 @@ def run_pipeline():
     
                 CHUNK_SIZE = 1000
     
-                for i in range(0, len(records), CHUNK_SIZE):
-                    chunk = records[i:i + CHUNK_SIZE]
+                try:
+                  for i in range(0, len(records), CHUNK_SIZE):
+                        chunk = records[i:i + CHUNK_SIZE]
     
-                    collection.insert_many(chunk, ordered=False)
+                        collection.insert_many(chunk, ordered=False)
+    
+                except BulkWriteError:
+                      pass
     
             print(f"... {inserts} rows inserted into {table_name} for {db}")
             clts.elapt[f"... {inserts} rows inserted into {table_name} for {db}"] = clts.deltat(tstart)
