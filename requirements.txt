@@ -6,3 +6,5 @@ requests
 pymysql
 openpyxl
 clts_pcp
+pymongo
+crate
