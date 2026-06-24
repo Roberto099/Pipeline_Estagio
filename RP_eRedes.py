@@ -428,7 +428,7 @@ def run_pipeline():
                 print("... connecting to sql_tls database...")
                 timeout = dbcreds['timeout']
 
-                print("PEM EXISTS:", os.path.exists(f"etc/secrets/{user}-{db}.pem"))
+                print("PEM EXISTS:", os.path.exists(f"/etc/secrets/{user}-{db}.pem"))
     
                 if ENV == "Colab":
                     pem_content = userdata.get(dbcreds['pem'])
@@ -437,7 +437,7 @@ def run_pipeline():
                     pem_path = f"/tmp/{user}.pem"
 
                 else:
-                    pem_path = f"etc/secrets/{user}-{db}.pem"
+                    pem_path = f"/etc/secrets/{user}-{db}.pem"
 
     
                 connection = pymysql.connect(
