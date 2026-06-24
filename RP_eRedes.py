@@ -24,8 +24,6 @@ def run_pipeline():
     import pymongo
     import crate
 
-    print("CWD:", os.getcwd())
-    print("PEM exists:", os.path.exists(f"secrets/{user}-{db}.pem"))
     #-----------------------
     #Context Gathering
     #-----------------------
@@ -429,11 +427,18 @@ def run_pipeline():
             if dbcreds['dbms']=="sql_tls":
                 print("... connecting to sql_tls database...")
                 timeout = dbcreds['timeout']
+
+                print("CWD!!!!!!:", os.getcwd())
+                print("PEM EXISTS:", os.path.exists(f"secrets/{user}-{db}.pem"))
     
-                pem_content = userdata.get(dbcreds['pem'])
-                with open(f'/tmp/{user}.pem', 'w') as f:
-                    f.write(pem_content)
-                pem_path = f"/tmp/{user}.pem"
+                if ENV == "Colab":
+                    pem_content = userdata.get(dbcreds['pem'])
+                    with open(f'/tmp/{user}.pem', 'w') as f:
+                        f.write(pem_content)
+                    pem_path = f"/tmp/{user}.pem"
+
+                else:
+                    pem_path = f"secrets/{user}-{db}.pem"
 
     
                 connection = pymysql.connect(
