@@ -209,7 +209,7 @@ def run_pipeline():
     
     INVALID_VALUES = {"-", "", "?", "N/A", "NA", "null", "None"}
     
-    fls = all_dfs[0]
+    fls = all_files[0]
     
     filename = fls["name"]
     print(f"Processing: {filename}")
