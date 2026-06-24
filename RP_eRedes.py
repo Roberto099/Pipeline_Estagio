@@ -23,7 +23,9 @@ def run_pipeline():
     import warnings
     import pymongo
     import crate
-    
+
+    print("CWD:", os.getcwd())
+    print("PEM exists:", os.path.exists(f"secrets/{user}-{db}.pem"))
     #-----------------------
     #Context Gathering
     #-----------------------
