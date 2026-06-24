@@ -1,32 +1,32 @@
-#-----------------------
-#Imports
-#-----------------------
-
-import os
-import pandas as pd
-import requests
-import socket
-import datetime
-import json
-import crate
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import smtplib, ssl
-import clts_pcp as clts
-import pymysql
-import pymongo
-from urllib.parse import quote
-import tempfile
-import unicodedata
-import io
-import re
-import hashlib
-import unicodedata
-import numpy as np
-from pymongo.errors import BulkWriteError
-import warnings
-
 def run_pipeline():
+
+    #-----------------------
+    #Imports
+    #-----------------------
+
+    import os
+    import pandas as pd
+    import requests
+    import socket
+    import datetime
+    import json
+    import crate
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    import smtplib, ssl
+    import clts_pcp as clts
+    import pymysql
+    import pymongo
+    from urllib.parse import quote
+    import tempfile
+    import unicodedata
+    import io
+    import re
+    import hashlib
+    import unicodedata
+    import numpy as np
+    from pymongo.errors import BulkWriteError
+    import warnings
 
     #-----------------------
     #Context Gathering
