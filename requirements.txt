@@ -4,7 +4,5 @@ pandas
 numpy
 requests
 pymysql
-pymongo
-crate
 openpyxl
 clts_pcp
